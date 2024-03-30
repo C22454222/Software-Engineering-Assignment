@@ -1,0 +1,153 @@
+model Library
+-- Define a class representing a Book.
+class Book
+  -- Define attributes for a book: title, author, total number of copies, number of copies on the shelf.
+  attributes
+    title : String
+    author : String
+    no_copies : Integer
+    no_onshelf : Integer
+  
+  -- Define operations for a Book.
+  operations
+    -- Operation to borrow a book.
+    borrow()
+    -- Decrease the number of copies on the shelf by 1 when borrowing a book.
+    begin
+        self.no_onshelf := self.no_onshelf - 1
+    end
+    -- Pre-condition: Ensure there are available copies on the shelf before borrowing.
+    pre copiesOnShelf: no_copies > 0
+    -- Post-condition: Update the number of copies on the shelf after borrowing.
+    post: no_onshelf = no_onshelf@pre - 1
+
+    -- Operation to return a book.
+    return()
+    -- Increase the number of copies on the shelf by 1 when returning a book.
+    begin
+        self.no_onshelf := self.no_onshelf + 1
+    end
+
+end
+
+-- Define a class representing a Copy.
+class Copy
+  -- Define attributes for a copy: status indicating if it's on loan, status indicating if it's reserved.
+  attributes
+    onLoan : Boolean
+    reserved : Boolean
+  
+  -- Define operations for a Copy.
+  operations
+    -- Operation to borrow a copy.
+    borrow(m : Member)
+    -- Mark the copy as on loan and call the borrow operation of the associated book.
+    begin
+        self.onLoan := true;
+        self.book.borrow()
+    end
+    -- Operation to return a copy.
+    return(m : Member)
+    -- Mark the copy as returned and call the return operation of the associated book.
+    begin
+        self.onLoan := true;
+        self.book.return()
+    end
+end    
+    
+-- Define a class representing a Member.
+class Member 
+  -- Define attributes for a member: name, address, number of copies on loan, membership status, fines.
+  attributes 
+    name : String
+    address : String
+    no_onloan : Integer
+    status : String
+    fine : Integer
+  
+  -- Define operations for a Member.
+  operations
+    -- Operation for a member to borrow a copy.
+    borrow(c : Copy)
+    -- Add the copy to the member's borrowed list, increment the number of copies on loan, and call the borrow operation of the copy.
+    begin
+        insert (self, c) into HasBorrowed;
+        self.no_onloan := self.no_onloan + 1;
+        c.borrow(self);
+    end
+
+    -- Operation for a member to return a copy.
+    return(c: Copy)
+    -- Decrement the number of copies on loan, mark the copy as returned, and remove it from the member's borrowed list.
+    begin
+        self.no_onloan := self.no_onloan - 1;
+        c.return(self);
+        delete (self, c) from HasBorrowed;
+    end
+
+    -- Operation for a member to reserve a copy.
+    reserve(c: Copy)
+    -- Add the copy to the member's reserved list and mark the copy as reserved.
+    begin
+        insert (self, c) into HasReserved;
+        c.reserved:= true;
+    end
+               
+end
+  
+-- Define an association between Member and Copy indicating reservation.
+association HasReserved between
+    Member[0..1] role reserver
+    Copy[*] role copy
+end
+
+-- Define an association between Member and Copy indicating borrowing.
+association HasBorrowed between
+    Member[0..1] role borrower
+    Copy[*] role borrowed
+end
+
+-- Define an association between Copy and Book.
+association CopyOf between
+    Copy[1..*] role copies
+    Book[1] role book
+end
+
+-- Define constraints for the system.
+constraints
+
+-- Constraint for borrowing a copy by a member.
+context Member::borrow(c:Copy) 
+    -- Pre-condition: Ensure the member has not reached the borrowing limit.
+    pre limit: self.no_onloan < 1
+    -- Pre-condition: Ensure the copy is not already borrowed by the member.
+    pre: self.borrowed->excludes(c)
+    -- Pre-condition: Ensure the copy is either not reserved or reserved by the member.
+    pre: c.reserved = false or self.copy->includes(c)
+    -- Pre-condition: Ensure the copy is not currently on loan.
+    pre: c.onLoan = false
+    -- Post-condition: After borrowing, the copy should be marked as on loan.
+    post: c.onLoan = true
+    -- Post-condition: After borrowing, the copy should be added to the member's borrowed list.
+    post: self.borrowed->includes(c)
+
+-- Constraint for reserving a copy by a member.
+context Member::reserve(c:Copy) 
+    -- Pre-condition: Check if the copy is not already reserved.
+    pre: c.reserved = false
+    -- Pre-condition: Check if the copy is not currently on loan.
+    pre: c.onLoan = false
+    -- Post-condition: After reservation, the copy should be in the member's reserved list.
+    post: self.copy->includes(c)
+    -- Post-condition: After reservation, the copy should be marked as reserved.
+    post: c.reserved = true
+
+-- Constraint for returning a copy by a member.
+context Member::return(c:Copy)
+    -- Pre-condition: Check if the copy is currently on loan.
+    pre: c.onLoan = true
+    -- Pre-condition: Ensure the member actually borrowed the copy before returning.
+    pre: self.borrowed->includes(c)
+	
+
+	

@@ -1,0 +1,131 @@
+model Library
+
+-- Here, I'm defining a model for a library system.
+
+class Book
+  attributes
+    title : String
+    author : String
+    no_copies : Integer
+    no_onshelf : Integer
+  operations
+    borrow()
+    begin
+        self.no_onshelf := self.no_onshelf - 1
+    end
+    pre copiesOnShelf: no_copies >0  -- I'm ensuring that there are copies available on the shelf before borrowing.
+    post: no_onshelf = no_onshelf@pre - 1  -- After borrowing, I decrease the number of copies on the shelf.
+
+    return()
+    begin
+        self.no_onshelf := self.no_onshelf + 1
+    end
+
+    reserve()
+    begin
+        self.no_onshelf := self.no_onshelf - 1
+    end
+
+end
+
+class Copy
+  attributes
+    status : String
+  operations
+    borrow( m : Member)
+    begin
+        self.status := 'onLoan';  -- When borrowed, the status of the copy changes to 'onLoan'.
+        self.book.borrow()  -- I call the borrow operation of the associated book.
+    end
+    return( m : Member)
+    begin
+        self.status := 'onShelf';  -- When returned, the status of the copy changes to 'onShelf'.
+        self.book.return()  -- I call the return operation of the associated book.
+    end
+    reserve( m : Member)
+    begin
+        self.status:= 'isReserved';  -- When reserved, the status of the copy changes to 'isReserved'.
+        self.book.reserve();  -- I call the reserve operation of the associated book.
+    end
+
+
+  statemachines
+	psm States
+	states
+		newCopy : initial
+		available	[status = 'onShelf']
+		taken		[status = 'onLoan']
+		reserved	[status = 'isReserved']
+	transitions
+		newCopy -> available { create }  -- Transition from creating a new copy to making it available on the shelf.
+		available -> taken	{ borrow() }  -- Transition from available to taken (borrowed) state.
+		available -> reserved { reserve() }  -- Transition from available to reserved state.
+		reserved -> taken { borrow() }  -- Transition from reserved to taken (borrowed) state.
+		taken -> available { return() }  -- Transition from taken (borrowed) to available state (returned).
+	end
+end    
+
+class Member 
+  attributes 
+    name : String
+    address : String
+    no_onloan : Integer
+    status : String
+    fine : Integer
+  operations
+    borrow(c : Copy)
+    begin
+        insert (self, c) into HasBorrowed;  -- I add the copy to the list of copies borrowed by this member.
+        self.no_onloan := self.no_onloan + 1;  -- Increment the count of copies borrowed by this member.
+        c.borrow(self);  -- I call the borrow operation of the copy.
+    end
+
+
+    return( c: Copy)
+    begin
+        self.no_onloan := self.no_onloan - 1;  -- Decrement the count of copies borrowed by this member.
+        c.return(self);  -- I call the return operation of the copy.
+        delete (self, c) from HasBorrowed;  -- I remove the copy from the list of copies borrowed by this member.
+    end
+
+    reserve( c: Copy)
+    begin
+        insert (self, c) into HasReserved;  -- I add the copy to the list of copies reserved by this member.
+        c.reserve(self);  -- I call the reserve operation of the copy.
+    end
+               
+end
+  
+association HasBorrowed between
+    Member[0..1] role borrower
+    Copy[*] role borrowed
+end
+
+association CopyOf between
+    Copy[1..*] role copies
+    Book[1] role book
+end
+
+association HasReserved between
+    Member[0..1] role reserver
+    Copy[*] role copy
+end
+  
+constraints
+
+context Member::borrow(c:Copy) 
+    pre limit: self.no_onloan < 1  -- Before borrowing, I ensure that the member doesn't exceed the borrowing limit.
+    pre: self.borrowed->excludes(c)  -- I ensure that the member hasn't already borrowed this copy.
+    pre: c.status = 'onShelf' or self.copy->includes(c)  -- I ensure that the copy is available on the shelf or already borrowed by this member.
+    post: c.status = 'onLoan'  -- After borrowing, I ensure that the status of the copy is 'onLoan'.
+    post: self.borrowed->includes(c)  -- After borrowing, I ensure that the copy is added to the list of copies borrowed by this member.
+
+context Member::reserve(c:Copy) 
+    pre: c.status = 'onShelf'  -- Before reserving, I ensure that the copy is available on the shelf.
+    post: self.copy->includes(c)  -- After reserving, I ensure that the copy is added to the list of copies reserved by this member.
+    post: c.status = 'isReserved'  -- After reserving, I ensure that the status of the copy is 'isReserved'.
+
+context Member::return(c:Copy)
+    pre: c.status = 'onLoan'  -- Before returning, I ensure that the copy is currently on loan.
+    pre: self.borrowed->includes(c)  -- I ensure that the member has borrowed this copy.
+    post: c.status = 'onShelf'  -- After returning, I ensure that the status of the copy is 'onShelf'.
