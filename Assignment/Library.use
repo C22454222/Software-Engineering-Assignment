@@ -1,43 +1,44 @@
 model Library
 
-enum BookStatus { available, unavailable, onreserve }
-enum CopyStatus { onShelf, onLoan, reserved, unavailable }
+enum BookStatus { available, unavailable, onreserve}
 
 class Book
-  attributes
-    title : String
-    author : String
-    status : BookStatus init = #available
-    no_copies : Integer
-    no_onshelf : Integer
-
-  operations
-    borrow()
-    begin
-        self.no_onshelf := self.no_onshelf - 1;
-        if (self.no_onshelf = 0) then 
-            self.status := #unavailable 
+    attributes
+        title : String
+        author : String
+        status : BookStatus init = #available
+        no_copies : Integer init = 2
+        no_onshelf : Integer init = 2
+  
+    operations
+        borrow()
+        begin
+            self.no_onshelf := self.no_onshelf - 1;
+            if (self.no_onshelf = 0) then 
+                self.status := #unavailable 
+            end
         end
-    end
 
-    return()
-    begin
-        self.no_onshelf := self.no_onshelf + 1;
-        if (self.status = #onreserve) then
+        -- Added this
+        defective()
+        begin
+        end      
+        
+        return() 
+        begin
+            self.no_onshelf := self.no_onshelf + 1;
             self.status := #available
-        end
-    end
+        end 
+        post: no_onshelf = no_onshelf@pre + 1
 
-    reserve()
-    begin
-        self.no_onshelf := self.no_onshelf - 1;
-        if (self.no_onshelf = 0) then 
-            self.status := #onreserve
+        -- Added this
+        repair()
+        begin
         end
-    end
+    
     statemachines
         psm States
-        states
+        states                        
             newTitle : initial
             available       [no_onshelf > 0]
             unavailable     [no_onshelf = 0]
@@ -47,106 +48,166 @@ class Book
             available -> available { [no_onshelf > 1] borrow() }
             available -> available { return() }
             unavailable -> available { return() }
-    end
+        end
 end
 
+enum CopyStatus {onShelf, onLoan, damaged, goodCondition}
+
 class Copy
-  attributes
-    status : CopyStatus init = #onShelf
+    attributes
+        status : CopyStatus init = #onShelf;
+        -- Added this
+        -- Represents the condition of a library copy.
+        condition : CopyStatus init = #goodCondition
+    operations
+        return()
+        begin
+            self.status := #onShelf;
+            self.book.return()
+        end
+    
+        reserve()
+    
+        borrow( m : Member)
+        begin
+            self.status := #onLoan;
+            self.book.borrow()
+        end
 
-  operations
+        -- Added this
+        -- Marks the copy as defective and notifies the associated book
+        defective(m : Member)
+        begin
+            self.condition := #damaged;
+            self.book.defective()
+        end
 
-    borrow( m : Member)
-    begin
-        self.status := #onLoan;  -- When borrowed, the status of the copy changes to 'onLoan'.
-        self.book.borrow()  -- I call the borrow operation of the associated book.
-    end
+        -- Added this
+        -- Restores the copy's condition to goodCondition
+        repair()
+        begin
+            self.condition := #goodCondition
+        end
 
-    return( m : Member)
-    begin
-        self.status := #onShelf;  -- When returned, the status of the copy changes to 'onShelf'.
-        self.book.return()  -- I call the return operation of the associated book.
-    end
+    statemachines
+        psm States
+        states
+            newCopy : initial
+            onShelf
+            onLoan
+        transitions
+            newCopy -> onShelf {create}
+            onShelf -> onLoan { borrow() }
+            onLoan -> onShelf { return() }
+        end
+        -- Added this
+        -- Represents a state machine for managing the quality of a book.
+        psm BookStandard
+        states
+            -- Initial state when a book's quality is being set
+            setQuality : initial
 
-    reserve( m : Member)
-    begin
-        self.status:= #reserved;  -- When reserved, the status of the copy changes to 'isReserved'.
-        self.book.reserve();  -- I call the reserve operation of the associated book.
-    end
+            -- Represents a book in good condition
+            goodCondition
 
-  statemachines
-	psm States
-	states
-		newCopy : initial
-		available	[status = #onShelf]
-		unavailable	[status = #onLoan]
-		reserved	[status = #reserved]
-	transitions
-		newCopy -> available { create }  -- Transition from creating a new copy to making it available on the shelf.
-		available -> unavailable { borrow() }  -- Transition from available to taken (borrowed) state.
-		available -> reserved { reserve() }  -- Transition from available to reserved state.
-		reserved -> unavailable { borrow() }  -- Transition from reserved to taken (borrowed) state.
-		unavailable -> available { return() }  -- Transition from taken (borrowed) to available state (returned).
-	end
-end    
+            -- Represents a book that has been damaged
+            damaged
 
+        transitions
+            -- Transition from setting the quality to a state of good condition
+            setQuality -> goodCondition { create }
+
+            -- Transition from good condition to damaged state, triggered when the book is marked as defective
+            goodCondition -> damaged { defective() }
+
+            -- Transition from damaged state back to good condition after the book has been repaired
+            damaged -> goodCondition { repair() }
+        end
+end
+    
 class Member 
   attributes 
     name : String
     address : String
-    no_onloan : Integer
-    no_onshelf : Integer
+    no_onloan : Integer init = 0
+    -- Represents the status of the member (e.g., active, suspended)
     status : String
-    fine : Integer
 
+    -- Represents the amount of fine the member has to pay
+    fine : Real init = 0
+
+    -- Represents the number of books damaged by the member
+    booksDamaged : Integer init = 0
   operations
-
     okToBorrow() : Boolean 
-        begin
-            if (self.no_onloan < self.no_onshelf) then
-                result := true
-            else 
-                result := false
-            end
-        end
+    begin
+      if (self.no_onloan < 2) then
+        result := true
+      else 
+        result := false
+      end
+    end
+    
     borrow(c : Copy)
     begin
         declare ok : Boolean;
         ok := self.okToBorrow();
-        if (ok) then
-            insert (self, c) into HasBorrowed;  -- I add the copy to the list of copies borrowed by this member.
-            self.no_onloan := self.no_onloan + 1; -- Increment the count of copies borrowed by this member.
-            c.borrow(self);  -- I call the borrow operation of the copy.
+        if( ok ) then
+            insert (self, c) into HasBorrowed;
+            self.no_onloan := self.no_onloan + 1;
+            c.borrow(self)
         end
     end
 
-    return( c: Copy)
+    -- Added this
+    -- Marks a copy of a book as defective
+    defective(c: Copy)
     begin
-        self.no_onloan := self.no_onloan - 1;  -- Decrement the count of copies borrowed by this member.
-        c.return(self);  -- I call the return operation of the copy.
-        delete (self, c) from HasBorrowed;  -- I remove the copy from the list of copies borrowed by this member.
+        -- Insert the pair (self, c) into the collection of copies marked as damaged
+        insert (self, c) into hasDamaged;
+        
+        -- Call the defective method on the copy, indicating it's marked as defective by this member
+        c.defective(self);
+        
+        -- Increase the member's fine by 100 for marking the book as defective
+        self.fine := self.fine + 100;
+        
+        -- Increase the count of books damaged by this member
+        self.booksDamaged := self.booksDamaged + 1
     end
 
-    okToReserve() : Boolean 
+    -- Added this: Repairs a copy of a previously damaged book
+    repair(c: Copy)
     begin
-        if (self.no_onloan < self.no_onshelf) then
-            result := true
-        else 
-            result := false
-        end
+        -- Remove the pair (self, c) from the collection of copies marked as damaged
+        delete (self, c) from hasDamaged;
+        
+        -- Decrease the count of copies currently on loan by 1, indicating one less damaged copy is being borrowed
+        delete (self, c) from HasBorrowed;
+        self.no_onloan := self.no_onloan - 1;
+        
+        -- Call the repair method on the copy, indicating it has been repaired
+        c.repair();
+        -- Call the reutrn method on the copy, indicating it has been returned
+        c.return()
     end
 
-    reserve( c: Copy)
+    
+    return(c : Copy)
     begin
-        declare ok : Boolean;
-        ok := self.okToReserve();
-        if (ok) then
-            insert (self, c) into HasReserved;  -- I add the copy to the list of copies reserved by this member.
-            c.reserve(self);  -- I call the reserve operation of the copy.
-        end
-    end         
-end
-  
+        delete (self, c) from HasBorrowed;
+        self.no_onloan := self.no_onloan - 1;
+        c.return()
+    end
+
+    -- Represents the action of a member paying a penalty/fine
+    payPenalty(x: Real)
+    begin
+        -- Decreases the member's fine by the amount specified (x)
+        self.fine := self.fine - x
+    end    
+end    
+
 association HasBorrowed between
     Member[0..1] role borrower
     Copy[*] role borrowed
@@ -157,39 +218,47 @@ association CopyOf between
     Book[1] role book
 end
 
-association HasReserved between
-    Member[0..1] role reserver
-    Copy[*] role copy
+-- Added this
+-- Represents an association between members and copies, indicating which member marked which copies as damaged
+association hasDamaged between
+    -- Specifies the cardinality and roles involved in the association:
+    -- Member: 0 to 1 (optional) culprit role (the member who marked the copy as damaged)
+    -- Copy: zero to many damagedBy role (the copies marked as damaged by the member)
+    Member[0..1] role culprit
+    Copy[*] role damagedBy
 end
   
-constraints
-
-context Book::borrow()
-    pre copiesOnShelf: no_copies > 0  -- I'm ensuring that there are copies available on the shelf before borrowing.
-    post: no_onshelf = no_onshelf@pre - 1  -- After borrowing, I decrease the number of copies on the shelf.
-
-context Book::return()
-    post: no_onshelf = no_onshelf@pre + 1
-
-context Book::reserve()
-    pre copiesOnShelf: no_copies > 0  -- I'm ensuring that there are copies available on the shelf before reserving.
-    post: no_onshelf = no_onshelf@pre - 1
+constraints          
 
 context Member::borrow(c:Copy) 
-    pre limit: self.no_onloan < 1  -- Before borrowing, I ensure that the member doesn't exceed the borrowing limit.
-    pre: self.borrowed->excludes(c)  -- I ensure that the member hasn't already borrowed this copy.
-    pre: c.status = #onShelf or self.copy->includes(c)  -- I ensure that the copy is available on the shelf or already borrowed by this member.
-    post: c.status = #onLoan  -- After borrowing, I ensure that the status of the copy is 'onLoan'.
-    post: self.borrowed->includes(c)  -- After borrowing, I ensure that the copy is added to the list of copies borrowed by this member.
+    pre limit: self.no_onloan < 2
+    pre cond1: self.borrowed->excludes(c)
+    post cond2: self.borrowed->includes(c)
 
-context Member::return(c:Copy)
-    pre: c.status = #onLoan  -- Before returning, I ensure that the copy is currently on loan.
-    pre: self.borrowed->includes(c)  -- I ensure that the member has borrowed this copy.
-    post: c.status = #onShelf  -- After returning, I ensure that the status of the copy is 'onShelf'.
+context Copy  
+    inv statusInv: self.status = #onShelf or self.status = #onLoan
 
-context Member::reserve(c:Copy) 
-    pre: c.status = #onShelf  -- Before reserving, I ensure that the copy is available on the shelf.
-    post: self.copy->includes(c)  -- After reserving, I ensure that the copy is added to the list of copies reserved by this member.
-    post: c.status = #reserved  -- After reserving, I ensure that the status of the copy is 'isReserved'.
+-- Added this
+-- Marking a Book as Defective
+context Member::defective(c: Copy)
+    -- Preconditions: Only a book currently on loan can be marked as defective
+    pre bookHasBeenBorrowed: c.status = #onLoan
 
+    -- Preconditions: Ensure you can't mark a book as defective if it's already damaged
+    pre bookNotDamaged: c.condition <> #damaged
 
+    -- Postcondition: After marking, the book's condition should be set to damaged
+    post bookHasBeenDamaged: c.condition = #damaged
+
+    -- Constraints: Books can only be marked as defective if they are either currently borrowed or already marked as damaged
+
+-- Paying a Penalty
+context Member::payPenalty(x: Real)
+    -- Preconditions: You can only pay a fine if you have an outstanding fine to settle
+    pre hasToPayFine: self.fine > 0
+
+    -- Preconditions: The amount being paid must be greater than zero
+    pre BiggerThanZero: x > 0
+
+    -- Postcondition: Paying a fine shouldn't result in a negative fine balance
+    post NonNegativeFine: self.fine >= 0
